@@ -1,65 +1,106 @@
 const router =  require('express').Router()
 var nodemailer = require("nodemailer")
+const auth = require("../middleware/auth")
+const bcrypt = require('bcryptjs')
+const crypto = require('crypto')
+const jwt = require("jsonwebtoken")
 
 const Adresses = require('../models/Adresses')
 const Information = require('../models/Information')
 const User = require('../models/User')
 
 router.post('/', async(req,res) => {
-    const {username,password,token} = req.body
-    if(!username || !password || !token){
+    const {username,password,email,token} = req.body
+    if(!username || !password){
         res.status(422).json({error: 'Não informado todas as credenciais necessárias.'})
     }
+    
+    encryptedPassword = await bcrypt.hash(password, 10);
     const user = {
-        username,password,token
+        username,
+        password: encryptedPassword,
+        email: email.toLowerCase()
+    }
+    try{
+        const emailjwt = email.toLowerCase()
+        await User.create(user)
+        const token = jwt.sign(
+            { user_id: user._id, emailjwt },
+            process.env.TOKEN_KEY,
+            {
+            expiresIn: "2h",
+            }
+        );
+        res.status(201).json({message:"Usuário cadastrado com sucesso!"})
+    }catch(error){
+        res.status(500).json({error: "Usuário não foi cadastrado."})
     }
 })
 
 router.get('/', async(req,res) => {
     try{
-        const ipClient = req.connection.remoteAddress
+        const ipClient = req.socket.remoteAddress
         const {username,password,token} = req.body
         
         if(!username || !password || !token){
-            res.status(422).json({error: 'Não informado todas as credenciais necessárias.'})
+            res.status(400).json({error: 'Não informado todas as credenciais necessárias.'})
         }
-
-
 
         const user = await User.findOne({username:username})
         if(!user){
             res.status(422).json({error: 'Usuário não encontrado.'})
         }
-        if(user.password != password){
-            res.status(422).json({error: 'Credenciais inválidas.'})
-        }
-
-        const adress = await Adresses.findOne({ip_adress: ipClient})
-        if(!adress){
-            const remetente = nodemailer.createTransport({
-                host: '',
-                service: '',
-                port:587,
-                secure:true,
-                auth:{
-                    user: process.env.EMAIL_FROM,
-                    pass: process.env.EMAIL_PASS
+        if (user && (await bcrypt.compare(password, user.password))){
+            const email = user.email
+            const token = jwt.sign(
+                { user_id: user._id, email },
+                process.env.TOKEN_KEY,
+                {
+                  expiresIn: "2h",
                 }
-            })
-            var email = {
+            )
+        }else{
+            res.status(400).send("Credenciais inválidas.");
+        }
+        
+        const adress = await Adresses.findOne({ip_adress: ipClient, id_user: user._id})
+        if(!adress){
+            const randomHash = crypto.randomBytes(20).toString('hex')
+            user.auth_token = randomHash
+             const transporter = nodemailer.createTransport({
+                service: 'gmail',
+                auth: {
+                  user: process.env.EMAIL_FROM,
+                  pass: process.env.EMAIL_PASS
+                }
+              })
+              
+              const mailOptions = {
                 from: process.env.EMAIL_FROM,
-                to: user.Email,
+                to: 'kelvin.arg11@gmail.com',
                 subject: 'Liberar Acesso',
-                text: "<html><body><section><h1>Foi feito uma tentativa de acesso com seu usuário</h1><h3>Por favor, confirme se foi você que tentou acessar</h3><a href='localhost:3500/ConfirmarUsuario?IdUser=123&auth=true'>Sim, sou eu!</a> &nbsp; <a href='localhost:3500/ConfirmarUsuario?IdUser=123&auth=false'>Não, não foi eu!</a></section></body></html>"
-            }
+                text: "Email de liberação de acesso",
+                html: `<html><body><section><h1>Foi feito uma tentativa de acesso com seu usuário</h1><h3>Por favor, confirme se foi você que tentou acessar</h3><a href='http://localhost:3000/ConfirmarUsuario?UserEmail=${user.email}&UserIp=${ipClient}&UserToken=${user.auth_token}'><input type='button' value='Autorizar'></a></section></body></html>`
+              }
+              
+              transporter.sendMail(mailOptions, function(error, info){
+                if (error) {
+                    console.log(error);
+                } else {
+                    user.save()
+                    console.log('Email sent: ' + info.response);
+                }
+              });
+
             res.status(422).json({message: 'Uma mensagem foi enviada para o seu email cadastrado, confirme que é você que está tentando acessar as informações.'})
         }else{
             const infos = await Information.find()
             res.status(200).json(infos)
         }
 
-    }catch(error){
-        res.status(500).json({error: error})
+    }catch(err){
+        console.log(err)
+        res.status(500).json({error: "Erro ao buscar os dados"})
     } 
 })
 
