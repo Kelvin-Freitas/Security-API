@@ -38,6 +38,8 @@ app.get('/ConfirmarUsuario', async(req,res) =>{
     }
     try{
       await Adresses.create(adress)
+      user.auth_token = ""
+      user.save()
       res.status(201).json({message:"Acesso liberado!"})
     }catch(err){
       res.status(500).json({message: "Acesso não liberado.", error: err})
@@ -50,7 +52,7 @@ const infoRoutes = require('./routes/infoRoutes')
 app.use('/info', infoRoutes)
 
 //portas de config 
-app.listen(3500)
+//app.listen(3500)
 
 const DB_USER = process.env.DB_USER
 const DB_PASSWORD = encodeURIComponent(process.env.DB_PASSWORD)
